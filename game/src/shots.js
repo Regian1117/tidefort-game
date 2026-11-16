@@ -6,7 +6,7 @@ import { createRandom } from './random.js';
 import { chooseUpgrade, createGame, offerUpgrades, updateGame } from './game.js';
 import { createAutopilot } from './autopilot.js';
 import {
-  SCREEN_PLAY, SCREEN_TITLE, SCREEN_UPGRADE, SCREEN_WIN,
+  SCREEN_LOSE, SCREEN_PLAY, SCREEN_TITLE, SCREEN_UPGRADE, SCREEN_WIN,
 } from './render.js';
 
 const LIMIT_SECONDS = 900;
@@ -43,6 +43,17 @@ const SCENES = {
     screen: SCREEN_UPGRADE,
     ready: (g) => g.tide === 6 && g.phase === 'between',
   },
+  // Not a handed-in shot, a check: the rogue wave warning on tide 7.
+  rogue: {
+    screen: SCREEN_PLAY,
+    ready: (g) => g.tide === 7 && g.phase === 'tide' && g.rogueWarning > 0.5 && g.rogueWarning < 3,
+  },
+  // Not a handed-in shot, a check: the lose screen when nobody builds anything.
+  lose: {
+    screen: SCREEN_LOSE,
+    idle: true,
+    ready: (g) => g.phase === 'lost',
+  },
   // The ending: the win screen after tide 7.
   end: {
     screen: SCREEN_WIN,
@@ -54,14 +65,14 @@ const SCENES = {
 export function stageShot(name, seed) {
   const scene = SCENES[name] ?? SCENES.start;
   const game = createGame(createRandom(seed));
-  const pilot = createAutopilot();
+  const pilot = createAutopilot(scene.idle ? { interval: 1e9 } : {});
   playUntil(game, pilot, scene.ready);
   if (game.phase === 'between' && game.choices.length === 0) offerUpgrades(game);
-  const screen = name === 'end' && game.phase === 'lost' ? 'lose' : scene.screen;
+  const screen = name === 'end' && game.phase === 'lost' ? SCREEN_LOSE : scene.screen;
   return {
     game,
     screen,
-    cursor: name === 'end' ? null : name === 'late' ? { x: 724, y: 476 } : { x: pilot.x, y: pilot.y },
+    cursor: name === 'end' || name === 'lose' ? null : name === 'late' ? { x: 724, y: 476 } : { x: pilot.x, y: pilot.y },
     best: name === 'end' ? Math.max(game.score - 4200, 0) : 18450,
     newBest: name === 'end',
     hover: 1,

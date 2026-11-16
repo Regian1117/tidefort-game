@@ -210,9 +210,9 @@ function drawBanner(ctx, game) {
   const fade = Math.min(1, (b.life - b.age) * 2.5, b.age * 5);
   ctx.globalAlpha = Math.max(0, fade);
   const w = 640;
-  panel(ctx, 640 - w / 2, 96, w, 82, { fill: b.alert ? PALETTE.coral : 'rgba(255, 251, 238, 0.94)', radius: 18 });
-  outlineText(ctx, b.text, 640, 142, { size: 46, align: 'center', color: b.alert ? '#ffffff' : PALETTE.coralDark, stroke: b.alert ? PALETTE.coralDark : '#ffffff', width: 6 });
-  plainText(ctx, b.sub, 640, 168, { size: 18, align: 'center', color: b.alert ? '#fff6dc' : '#4a3322' });
+  panel(ctx, 640 - w / 2, 84, w, 78, { fill: b.alert ? PALETTE.coral : 'rgba(255, 251, 238, 0.94)', radius: 18 });
+  outlineText(ctx, b.text, 640, 128, { size: 46, align: 'center', color: b.alert ? '#ffffff' : PALETTE.coralDark, stroke: b.alert ? PALETTE.coralDark : '#ffffff', width: 6 });
+  plainText(ctx, b.sub, 640, 152, { size: 18, align: 'center', color: b.alert ? '#fff6dc' : '#4a3322' });
   ctx.globalAlpha = 1;
 }
 
