@@ -1,140 +1,83 @@
-// Paints the beach scene: sky strip, animated sea with a foam line, the sand grid, the castle,
-// every structure, wave, pest and particle, and the hover ghost under the mouse. The HUD and the
-// screens are drawn on top of this by hud.js and screens.js.
-import { CASTLE, FIELD, GRID, PALETTE, SEA, TOOLS } from './config.js';
-import { cellAt, cellLeft, cellTop, structureAt } from './beach.js';
-import { flagIcon, outlineText, roundRectPath } from './draw.js';
-import { drawCrab, drawGull, drawLog, drawParticle, drawShell, drawStructure, drawWave } from './sprites.js';
+// Paints the beach scene bottom to top: sand and its beach life, the buildable grid, the sea (sea.js),
+// flooded cells, the castle, structures, the telegraphed wave arrows, pests, the kid, particles and
+// floating text. The slim HUD and the screens are drawn over this by hud.js and screens.js.
+import { BARS, CASTLE, FIELD, GRID, PALETTE, TOOLS } from './config.js';
+import { cellAt, cellLeft, cellTop, cellCentreX, firstDryRow, structureAt } from './beach.js';
+import { flagIcon, outline, outlineText, plainText, roundRectPath } from './draw.js';
+import { drawCrab, drawGull, drawKid, drawLog, drawParticle, drawPrint, drawShell } from './sprites.js';
+import { drawStructure } from './structures.js';
+import { drawFlood, drawRogueShadow, drawSea } from './sea.js';
+import { drawDressing, drawKite } from './dressing.js';
+import { forecast, imminentLanes } from './lanes.js';
 import { toolCost } from './walls.js';
 
 const GRAINS = (() => {
   const grains = [];
   let a = 12345;
-  for (let i = 0; i < 520; i += 1) {
+  for (let i = 0; i < 600; i += 1) {
     a = (Math.imul(a, 1664525) + 1013904223) | 0;
     const x = (a >>> 8) % FIELD.width;
     a = (Math.imul(a, 1664525) + 1013904223) | 0;
-    const y = SEA.bottom + ((a >>> 8) % (FIELD.height - SEA.bottom));
-    grains.push({ x, y, s: 1.5 + ((a >>> 4) % 3) });
+    grains.push({ x, y: BARS.top + ((a >>> 8) % (BARS.bottom - BARS.top)), s: 1.5 + ((a >>> 4) % 3) });
   }
   return grains;
 })();
 
-function drawSea(ctx, time, game) {
-  const grad = ctx.createLinearGradient(0, SEA.top, 0, SEA.bottom);
-  grad.addColorStop(0, PALETTE.seaDeep);
-  grad.addColorStop(0.55, PALETTE.sea);
-  grad.addColorStop(1, PALETTE.seaLight);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, SEA.top, FIELD.width, SEA.bottom - SEA.top + 12);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
-  ctx.lineWidth = 3;
-  for (let band = 0; band < 3; band += 1) {
-    ctx.beginPath();
-    const y0 = SEA.top + 22 + band * 26;
-    for (let x = 0; x <= FIELD.width; x += 10) {
-      const y = y0 + Math.sin(x * 0.018 + time * (1.2 + band * 0.3) + band * 2) * 4;
-      if (x === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-  // sun glints
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-  for (let i = 0; i < 14; i += 1) {
-    const gx = (i * 97 + time * 18) % FIELD.width;
-    const gy = SEA.top + 10 + ((i * 53) % 70);
-    ctx.fillRect(gx, gy, 10, 3);
-  }
-  // rogue-wave warning swell
-  if (game.rogueWarning > 0) {
-    const pulse = 0.25 + 0.2 * Math.sin(time * 12);
-    ctx.fillStyle = `rgba(255, 90, 74, ${pulse})`;
-    ctx.fillRect(0, SEA.top, FIELD.width, SEA.bottom - SEA.top);
-  }
-}
-
-function shoreline(time) {
-  const path = new Path2D();
-  path.moveTo(0, SEA.bottom - 14);
-  for (let x = 0; x <= FIELD.width; x += 8) path.lineTo(x, SEA.bottom + 4 + Math.sin(x * 0.03 + time * 1.5) * 5);
-  path.lineTo(FIELD.width, SEA.bottom - 14);
-  path.closePath();
-  return path;
-}
-
-function drawSand(ctx, time) {
-  const top = SEA.bottom;
-  const grad = ctx.createLinearGradient(0, top, 0, FIELD.height);
+function drawSand(ctx) {
+  const grad = ctx.createLinearGradient(0, BARS.top, 0, BARS.bottom);
   grad.addColorStop(0, PALETTE.sandWet);
-  grad.addColorStop(0.12, PALETTE.sandDark);
-  grad.addColorStop(0.4, PALETTE.sand);
-  grad.addColorStop(1, '#f9e6b8');
+  grad.addColorStop(0.3, PALETTE.sandDark);
+  grad.addColorStop(0.7, PALETTE.sand);
+  grad.addColorStop(1, '#fbe9bd');
   ctx.fillStyle = grad;
-  ctx.fillRect(0, top - 14, FIELD.width, FIELD.height - top + 14);
+  ctx.fillRect(0, BARS.top, FIELD.width, BARS.bottom - BARS.top);
   ctx.fillStyle = 'rgba(140, 95, 50, 0.22)';
   for (const g of GRAINS) ctx.fillRect(g.x, g.y, g.s, g.s);
-  const path = shoreline(time);
-  ctx.fillStyle = '#ffffff';
-  ctx.fill(path);
-  ctx.strokeStyle = 'rgba(18, 161, 184, 0.65)';
-  ctx.lineWidth = 3;
-  ctx.stroke(path);
 }
 
-function drawGrid(ctx, game, view) {
-  const gx = GRID.x;
-  const gy = GRID.y;
-  const gw = GRID.cols * GRID.cell;
-  const gh = GRID.rows * GRID.cell;
-  roundRectPath(ctx, gx - 6, gy - 4, gw + 12, gh + 8, 10);
-  ctx.fillStyle = 'rgba(255, 246, 220, 0.38)';
+/** Faint cell outlines on the dry rows only: this is where you can build. */
+function drawGrid(ctx, game, time) {
+  const dry = firstDryRow(game.waterline);
+  const top = cellTop(dry);
+  const h = (GRID.rows - dry) * GRID.cellH;
+  ctx.fillStyle = 'rgba(255, 250, 230, 0.2)';
+  roundRectPath(ctx, GRID.x - 4, top, GRID.cols * GRID.cellW + 8, h + 2, 10);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(74, 51, 34, 0.45)';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(122, 79, 29, 0.28)';
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([6, 7]);
+  ctx.strokeStyle = 'rgba(122, 79, 29, 0.34)';
+  ctx.lineWidth = 1.6;
+  ctx.setLineDash([7, 8]);
   ctx.beginPath();
-  for (let c = 1; c < GRID.cols; c += 1) {
-    ctx.moveTo(gx + c * GRID.cell, gy);
-    ctx.lineTo(gx + c * GRID.cell, gy + gh);
+  for (let c = 0; c <= GRID.cols; c += 1) {
+    ctx.moveTo(GRID.x + c * GRID.cellW, top);
+    ctx.lineTo(GRID.x + c * GRID.cellW, top + h);
   }
-  for (let r = 1; r < GRID.rows; r += 1) {
-    ctx.moveTo(gx, gy + r * GRID.cell);
-    ctx.lineTo(gx + gw, gy + r * GRID.cell);
+  for (let r = dry; r <= GRID.rows; r += 1) {
+    ctx.moveTo(GRID.x, cellTop(r));
+    ctx.lineTo(GRID.x + GRID.cols * GRID.cellW, cellTop(r));
   }
   ctx.stroke();
   ctx.setLineDash([]);
-  // pest warnings: a bobbing marker at the top of a lane while a log or crab is on its way
-  for (const e of game.enemies) {
-    if (e.type === 'log' && e.y < GRID.y + 10) {
-      const x = cellLeft(e.lane) + GRID.cell / 2;
-      outlineText(ctx, '!', x, SEA.bottom + 40 + Math.sin(view.time * 10) * 3, { size: 40, color: PALETTE.coral, align: 'center' });
-    }
-  }
+  void time;
 }
 
-function drawCastle(ctx, game, view) {
+function drawCastle(ctx, game, time) {
   const { x, width, top, bottom } = CASTLE;
   const damage = 1 - game.castle.hp / game.castle.maxHp;
-  const bodyTop = top + 36;
+  const bodyTop = top + 34;
+  const shade = game.castle.flash > 0 ? '#ffe3d6' : '#e8c27d';
   ctx.fillStyle = 'rgba(74, 51, 34, 0.18)';
-  ctx.fillRect(x - 10, bottom - 4, width + 20, 12);
+  ctx.fillRect(x - 10, bottom - 4, width + 20, 10);
   ctx.lineJoin = 'round';
   ctx.lineWidth = 4;
   ctx.strokeStyle = PALETTE.outline;
-  const shade = game.castle.flash > 0 ? '#ffe3d6' : '#e8c27d';
   ctx.fillStyle = shade;
   roundRectPath(ctx, x, bodyTop, width, bottom - bodyTop, 10);
   ctx.fill();
   ctx.stroke();
-  const merlon = 28;
-  for (let mx = x + 6; mx < x + width - merlon; mx += merlon * 2) {
+  for (let mx = x + 6; mx < x + width - 28; mx += 56) {
     ctx.fillStyle = shade;
-    ctx.fillRect(mx, bodyTop - 14, merlon, 16);
-    ctx.strokeRect(mx, bodyTop - 14, merlon, 16);
+    ctx.fillRect(mx, bodyTop - 14, 28, 16);
+    ctx.strokeRect(mx, bodyTop - 14, 28, 16);
   }
   for (const tx of [x - 14, x + width - 46]) {
     ctx.fillStyle = shade;
@@ -159,7 +102,7 @@ function drawCastle(ctx, game, view) {
   ctx.fill();
   ctx.stroke();
   ctx.fillStyle = '#6b4526';
-  roundRectPath(ctx, cx - 20, bottom - 52, 40, 52, 20);
+  roundRectPath(ctx, cx - 20, bottom - 50, 40, 50, 20);
   ctx.fill();
   ctx.stroke();
   ctx.fillStyle = '#35566f';
@@ -167,19 +110,96 @@ function drawCastle(ctx, game, view) {
     roundRectPath(ctx, wx, top + 24, 12, 18, 6);
     ctx.fill();
   }
-  // damage: gouges and a lowered look as integrity falls
   if (damage > 0.15) {
     ctx.fillStyle = 'rgba(122, 79, 29, 0.55)';
-    const bites = Math.floor(damage * 9);
-    for (let i = 0; i < bites; i += 1) {
-      const bx = x + 20 + ((i * 131) % (width - 40));
+    for (let i = 0; i < Math.floor(damage * 9); i += 1) {
       ctx.beginPath();
-      ctx.arc(bx, bodyTop + 6 + (i % 3) * 14, 9 + (i % 4) * 2, 0, Math.PI * 2);
+      ctx.arc(x + 20 + ((i * 131) % (width - 40)), bodyTop + 6 + (i % 3) * 14, 9 + (i % 4) * 2, 0, Math.PI * 2);
       ctx.fill();
     }
   }
-  const lowFlag = game.castle.flag <= 1;
-  flagIcon(ctx, cx, top + 4, 54, view.time, lowFlag ? 8 : 0);
+  flagIcon(ctx, cx, top + 4, 54, time, game.castle.flag <= 1 ? 8 : 0);
+}
+
+const ARROW_COLOURS = [[30, '#27c4c4'], [48, '#ffd23f'], [999, '#ff5a4a']];
+
+/** Telegraphed lanes: an arrow per lane with the strength of its hardest wave, and a count. */
+function drawForecast(ctx, game, time) {
+  const events = game.phase === 'tide' ? game.schedule : game.plan;
+  if (game.phase === 'won' || game.phase === 'lost' || events.length === 0) return;
+  const soon = game.phase === 'tide' ? imminentLanes(events, game.tideTime, 2.6) : new Set();
+  const base = (game.fx.waterShown ?? game.waterline) - 6;
+  for (const l of forecast(events)) {
+    if (l.hits === 0 && !l.crab && !l.log) continue;
+    const x = cellCentreX(l.lane);
+    const alert = soon.has(l.lane);
+    ctx.globalAlpha = game.phase === 'tide' && !alert ? 0.55 : 1;
+    const bob = alert ? Math.sin(time * 14) * 3 : 0;
+    if (l.hits > 0) {
+      const colour = ARROW_COLOURS.find(([limit]) => l.peak <= limit)[1];
+      const ay = base + bob;
+      outline(ctx, 3);
+      ctx.fillStyle = alert ? PALETTE.coral : colour;
+      ctx.beginPath();
+      ctx.moveTo(x - 9, ay - 24);
+      ctx.lineTo(x + 9, ay - 24);
+      ctx.lineTo(x + 9, ay - 8);
+      ctx.lineTo(x + 20, ay - 8);
+      ctx.lineTo(x, ay + 14);
+      ctx.lineTo(x - 20, ay - 8);
+      ctx.lineTo(x - 9, ay - 8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      roundRectPath(ctx, x - 25, ay - 62, 50, 31, 11);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.stroke();
+      plainText(ctx, String(Math.round(l.peak)), x - (l.hits > 1 ? 6 : 0), ay - 39, { size: 22, weight: 900, align: 'center', color: alert ? PALETTE.coralDark : PALETTE.ink });
+      if (l.hits > 1) plainText(ctx, `x${l.hits}`, x + 15, ay - 40, { size: 13, weight: 900, align: 'center', color: PALETTE.coralDark });
+      if (l.name && l.name !== 'wave' && game.phase !== 'tide') outlineText(ctx, l.name === 'swell' ? 'SWELL' : l.name === 'double' ? 'DOUBLE' : l.name === 'cross' ? 'SURGE' : 'RIP', x, ay - 68, { size: 13, color: '#ffffff', align: 'center', width: 4 });
+    }
+    if (l.crab) outlineText(ctx, 'CRAB', x, base + 30, { size: 14, color: '#ffe0d8', align: 'center', width: 4, stroke: PALETTE.coralDark });
+    if (l.log) outlineText(ctx, 'LOG', x, base + (l.crab ? 46 : 30), { size: 14, color: '#f3d3a0', align: 'center', width: 4 });
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawGhost(ctx, game, view) {
+  if (!view.cursor || (game.phase !== 'build' && game.phase !== 'tide')) return;
+  const cell = cellAt(view.cursor.x, view.cursor.y);
+  if (!cell) return;
+  const s = structureAt(game.beach, cell.col, cell.row);
+  const wet = cell.row < firstDryRow(game.waterline);
+  const ok = !wet && (s || game.sand >= toolCost(game.tool));
+  const x = cellLeft(cell.col);
+  const y = cellTop(cell.row);
+  ctx.fillStyle = ok ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 90, 74, 0.35)';
+  roundRectPath(ctx, x + 2, y + 2, GRID.cellW - 4, GRID.cellH - 4, 8);
+  ctx.fill();
+  ctx.strokeStyle = ok ? '#ffffff' : PALETTE.coral;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  if (!s && !wet) {
+    const tool = TOOLS.find((t) => t.id === game.tool);
+    ctx.globalAlpha = 0.55;
+    drawStructure(ctx, { kind: tool.id, level: 1, col: cell.col, row: cell.row, hp: 1, maxHp: 1, flash: 0, aim: -1.2 }, view.time);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawPrompt(ctx, game) {
+  const kid = game.kid;
+  if (!kid.prompt || game.phase !== 'tide') return;
+  const text = `SPACE: ${kid.prompt.toUpperCase()}`;
+  ctx.font = '800 16px sans-serif';
+  const w = ctx.measureText(text).width + 22;
+  roundRectPath(ctx, kid.x - w / 2, kid.y - 78, w, 26, 13);
+  ctx.fillStyle = 'rgba(255, 251, 238, 0.95)';
+  ctx.fill();
+  outline(ctx, 2.5);
+  ctx.stroke();
+  plainText(ctx, text, kid.x, kid.y - 60, { size: 16, weight: 900, align: 'center', color: PALETTE.coralDark });
 }
 
 export function drawScene(ctx, game, view) {
@@ -188,44 +208,29 @@ export function drawScene(ctx, game, view) {
   ctx.fillRect(0, 0, FIELD.width, FIELD.height);
   ctx.save();
   ctx.translate(game.fx.shakeX, game.fx.shakeY);
-  drawSea(ctx, time, game);
-  drawSand(ctx, time);
-  drawGrid(ctx, game, view);
-  drawCastle(ctx, game, view);
-  // hover ghost
-  if (view.cursor && (game.phase === 'build' || game.phase === 'tide')) {
-    const cell = cellAt(view.cursor.x, view.cursor.y);
-    if (cell) {
-      const s = structureAt(game.beach, cell.col, cell.row);
-      const x = cellLeft(cell.col);
-      const y = cellTop(cell.row);
-      const ok = s ? true : game.sand >= toolCost(game.tool);
-      ctx.fillStyle = ok ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 90, 74, 0.35)';
-      roundRectPath(ctx, x + 2, y + 2, GRID.cell - 4, GRID.cell - 4, 8);
-      ctx.fill();
-      ctx.strokeStyle = ok ? '#ffffff' : PALETTE.coral;
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      if (!s) {
-        const tool = TOOLS.find((t) => t.id === game.tool);
-        ctx.globalAlpha = 0.55;
-        drawStructure(ctx, { kind: tool.id, level: 1, col: cell.col, row: cell.row, hp: 1, maxHp: 1, flash: 0, aim: -1.2 }, time);
-        ctx.globalAlpha = 1;
-      }
-    }
-  }
+  drawSand(ctx);
+  drawDressing(ctx, time);
+  drawGrid(ctx, game, time);
+  for (const p of game.fx.prints) drawPrint(ctx, p);
+  drawSea(ctx, game, time);
+  drawKite(ctx, time);
+  drawFlood(ctx, game, time);
+  drawRogueShadow(ctx, game, time);
+  drawCastle(ctx, game, time);
+  drawGhost(ctx, game, view);
   for (const s of game.structures()) drawStructure(ctx, s, time);
-  for (const w of game.waves) drawWave(ctx, w, time);
+  drawForecast(ctx, game, time);
   for (const e of game.enemies) {
     if (e.type === 'crab') drawCrab(ctx, e, time);
     else if (e.type === 'log') drawLog(ctx, e);
   }
+  drawKid(ctx, game.kid, time);
   for (const e of game.enemies) if (e.type === 'gull') drawGull(ctx, e, time);
   for (const sh of game.shells) drawShell(ctx, sh);
   for (const p of game.fx.parts) drawParticle(ctx, p);
+  drawPrompt(ctx, game);
   for (const t of game.fx.texts) {
-    const k = 1 - t.age / t.life;
-    ctx.globalAlpha = Math.min(1, k * 2);
+    ctx.globalAlpha = Math.min(1, (1 - t.age / t.life) * 2);
     outlineText(ctx, t.text, t.x, t.y, { size: t.size, color: t.color, align: 'center' });
     ctx.globalAlpha = 1;
   }

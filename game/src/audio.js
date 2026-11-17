@@ -85,6 +85,8 @@ export function createAudio() {
     flag: () => { tone(440, 0.4, 'sawtooth', 0.2, 0, 110); noise(0.3, 0.2, 1500, 'lowpass', 0, 200); },
     castle: () => { tone(120, 0.3, 'sawtooth', 0.22, 0, 50); noise(0.3, 0.3, 600, 'lowpass', 0, 120); },
     scoop: () => { noise(0.12, 0.2, 2200, 'bandpass', 0, 900); tone(520, 0.06, 'triangle', 0.1); },
+    splash: () => { noise(0.45, 0.4, 1800, 'lowpass', 0, 300); tone(240, 0.25, 'sine', 0.2, 0, 90); },
+    drain: () => { noise(0.5, 0.18, 700, 'bandpass', 0, 2200); },
     nope: () => { tone(160, 0.12, 'square', 0.1, 0, 120); },
     warn: () => { [0, 0.3, 0.6].forEach((w) => tone(520, 0.2, 'square', 0.14, w, 400)); },
     rogue: () => { noise(1.4, 0.5, 400, 'lowpass', 0, 2400); tone(60, 1.2, 'sine', 0.45, 0, 120); },

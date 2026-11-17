@@ -1,113 +1,158 @@
-// A simple robot player. It plays attract mode behind the title screen and drives the screenshot
-// scenes, and the same code is what balances the tides in testing. Every `interval` seconds it
-// does one thing a hand could do: squash a pest, patch the weakest structure, build or upgrade the
-// next item on a fixed plan, or scoop sand. Its mouse position is exposed for the cursor.
-import { GRID } from './config.js';
-import { allStructures, cellCentreX, cellCentreY, structureAt } from './beach.js';
-import { altClickAt, clickAt, scoop, selectTool } from './player.js';
+// A robot player that uses the same controls a person has: it walks the kid with an intent
+// (direction + action) and clicks cells with the mouse functions. It plays attract mode behind the
+// title, drives the screenshot scenes, and is what the balance tests use. With `smart` it builds
+// from the telegraphed forecast (the lanes the sea will hit hardest first); otherwise it follows a
+// fixed layout. `idle` makes it do nothing at all.
+import { CASTLE, GRID, KID } from './config.js';
+import { allStructures, cellCentreX, cellCentreY, firstDryRow, structureAt } from './beach.js';
+import { altClickAt, clickAt, selectTool } from './player.js';
 import { startTideNow } from './game.js';
+import { forecast, imminentLanes } from './lanes.js';
 import { toolCost, upgradeCost } from './walls.js';
 
-const LANE_ORDER = [5, 6, 4, 7, 3, 8, 2, 9, 1, 10, 0, 11];
+const FIXED_LANES = [4, 5, 3, 6, 2, 7, 1, 8, 0, 9];
+const PICK_ORDER = ['seaweed', 'wet-sand', 'shell-armour', 'big-bucket', 'tide-chart', 'keep-mend', 'sharp-shells', 'sand-dollars', 'crab-traps', 'flag-charm', 'scarecrow'];
 
-/** The order a sensible player fills the beach in. */
-function buildPlan() {
-  const plan = [];
-  for (const col of LANE_ORDER.slice(0, 6)) plan.push({ col, row: 2, kind: 'wall' });
-  plan.push({ col: 3, row: 3, kind: 'tower' }, { col: 8, row: 3, kind: 'tower' });
-  for (const col of LANE_ORDER.slice(6)) plan.push({ col, row: 2, kind: 'wall' });
-  for (const col of [4, 7]) plan.push({ col, row: 0, kind: 'moat' });
-  plan.push({ col: 5, row: 3, kind: 'tower' });
-  for (const col of LANE_ORDER) plan.push({ col, row: 1, kind: 'wall' });
-  for (const col of [1, 10, 6, 5]) plan.push({ col, row: 0, kind: 'moat' });
-  for (const col of LANE_ORDER) plan.push({ col, row: 3, kind: 'wall' });
-  return plan;
+/** The lane (0..9) a pixel x sits in, clamped. */
+function laneOf(x) {
+  return Math.max(0, Math.min(GRID.cols - 1, Math.floor((x - GRID.x) / GRID.cellW)));
 }
 
-const PICK_ORDER = ['seaweed', 'wet-sand', 'shell-armour', 'tide-chart', 'keep-mend', 'sharp-shells', 'sand-dollars', 'big-bucket', 'crab-traps', 'flag-charm', 'scarecrow'];
-
 export function createAutopilot(options = {}) {
-  const interval = options.interval ?? 0.35;
-  const plan = buildPlan();
-  const pilot = { x: 640, y: 360, clock: 0, last: 'idle' };
+  const interval = options.interval ?? 0.3;
+  const pilot = { x: 640, y: 400, clock: 0 };
 
-  function moveTo(x, y) {
-    pilot.x = x;
-    pilot.y = y;
-  }
-
-  function squashNearest(game) {
-    let best = null;
-    for (const e of game.enemies) {
-      if (e.state === 'dead' || e.state === 'flee') continue;
-      if (!best || e.y > best.y) best = e;
+  /** Ordered build wishes for this tide: { col, row, kind }. */
+  function wishes(game) {
+    const dry = firstDryRow(game.waterline);
+    const last = GRID.rows - 1;
+    const list = [];
+    if (options.smart === false) {
+      for (const col of FIXED_LANES) list.push({ col, row: Math.min(last, dry + 1), kind: 'wall' });
+      for (const col of FIXED_LANES) list.push({ col, row: Math.min(last, dry + 2), kind: 'wall' });
+      return list;
     }
-    if (!best) return false;
-    moveTo(best.x, best.y);
-    return clickAt(game, best.x, best.y);
-  }
-
-  function patchWeakest(game) {
-    let weakest = null;
-    for (const s of allStructures(game.beach)) {
-      if (s.kind === 'moat') continue;
-      const ratio = s.hp / s.maxHp;
-      if (ratio < (options.patchBelow ?? 0.55) && (!weakest || ratio < weakest.hp / weakest.maxHp)) weakest = s;
+    const lanes = forecast(game.plan).filter((l) => l.hits > 0 || l.crab || l.log);
+    lanes.sort((a, b) => b.peak * Math.max(1, b.hits) - a.peak * Math.max(1, a.hits));
+    for (const l of lanes) {
+      const row = Math.min(last - 1, dry + 2);
+      if (l.peak > 0 && l.peak <= 33 && l.hits === 1 && row - 1 >= dry) list.push({ col: l.lane, row: row - 1, kind: 'moat' });
+      else list.push({ col: l.lane, row, kind: 'wall' });
     }
-    if (!weakest || game.sand < 2) return false;
-    moveTo(cellCentreX(weakest.col), cellCentreY(weakest.row));
-    return clickAt(game, pilot.x, pilot.y);
+    const crabLane = lanes.find((l) => l.crab);
+    if (crabLane) list.splice(2, 0, { col: Math.min(GRID.cols - 1, crabLane.lane + 1), row: last, kind: 'tower' });
+    for (const col of FIXED_LANES) list.push({ col, row: Math.min(last - 1, dry + 2), kind: 'wall' });
+    return list;
   }
 
-  function buildNext(game) {
-    for (const item of plan) {
-      const s = structureAt(game.beach, item.col, item.row);
-      if (!s) {
-        if (game.sand < toolCost(item.kind)) return false;
-        selectTool(game, item.kind);
-        moveTo(cellCentreX(item.col), cellCentreY(item.row));
-        return clickAt(game, pilot.x, pilot.y);
-      }
+  function mouseTurn(game) {
+    for (const w of wishes(game)) {
+      if (w.row < firstDryRow(game.waterline)) continue;
+      if (structureAt(game.beach, w.col, w.row)) continue;
+      if (game.sand < toolCost(w.kind)) return false;
+      selectTool(game, w.kind);
+      pilot.x = cellCentreX(w.col);
+      pilot.y = cellCentreY(w.row);
+      return clickAt(game, pilot.x, pilot.y);
     }
-    return false;
-  }
-
-  function upgradeSome(game) {
     let target = null;
     for (const s of allStructures(game.beach)) {
       const cost = upgradeCost(s);
-      if (cost === null || game.sand < cost + 4) continue;
-      if (s.kind === 'moat') continue;
-      const score = (s.kind === 'tower' ? 2 : 0) + (3 - s.level) - Math.abs(s.col - 5.5) * 0.05;
-      if (!target || score > target.score) target = { s, score };
+      if (cost === null || game.sand < cost + 2 || s.kind === 'moat') continue;
+      if (!target || s.level < target.level) target = s;
     }
     if (!target) return false;
-    moveTo(cellCentreX(target.s.col), cellCentreY(target.s.row));
+    pilot.x = cellCentreX(target.col);
+    pilot.y = cellCentreY(target.row);
     return altClickAt(game, pilot.x, pilot.y);
   }
 
-  function scoopSomewhere(game) {
-    moveTo(GRID.x + 120 + ((game.time * 90) % 500), GRID.y + 4 * GRID.cell + 20);
-    return scoop(game, pilot.x, pilot.y);
+  function walk(game, x, y) {
+    const kid = game.kid;
+    const dx = x - kid.x;
+    const dy = y - kid.y;
+    const d = Math.hypot(dx, dy);
+    game.intent.dx = d > 8 ? dx / d : 0;
+    game.intent.dy = d > 8 ? dy / d : 0;
+    return d <= 8;
+  }
+
+  /** The kid's turn: stay out of the surge, stomp crabs, swat gulls, patch, refill, deposit. */
+  function kidTurn(game) {
+    const kid = game.kid;
+    const intent = game.intent;
+    intent.act = false;
+    intent.dx = 0;
+    intent.dy = 0;
+    const danger = imminentLanes(game.schedule, game.tideTime, 2.4);
+    for (const w of game.waves) if (w.phase === 'surge') danger.add(w.lane);
+    const safeLane = (x) => {
+      const c = laneOf(x);
+      return !danger.has(c) && !danger.has(c - 1) && !danger.has(c + 1);
+    };
+    const wet = game.waterline + 26;
+    if (kid.stun > 0) return;
+    if (!safeLane(kid.x) && kid.y < game.waterline + 110) {
+      walk(game, kid.x, game.waterline + 130);
+      return;
+    }
+    let crab = null;
+    for (const e of game.enemies) if (e.type === 'crab' && e.state !== 'flee' && (!crab || e.y > crab.y)) crab = e;
+    if (crab && Math.hypot(crab.x - kid.x, crab.y - kid.y) < 520 && (safeLane(crab.x) || crab.y > game.waterline + 120)) {
+      walk(game, crab.x, crab.y);
+      return;
+    }
+    if (kid.prompt === 'swat') {
+      intent.act = true;
+      return;
+    }
+    if (game.sand < 14 && kid.carry >= kid.cap * 0.7 && (options.deposit ?? true)) {
+      walk(game, CASTLE.x + CASTLE.width / 2, CASTLE.top - 24);
+      intent.act = kid.prompt === 'deposit';
+      return;
+    }
+    let weak = null;
+    for (const s of allStructures(game.beach)) {
+      if (s.kind === 'moat' || s.hp / s.maxHp > (options.patchBelow ?? 0.7)) continue;
+      if (!weak || s.hp / s.maxHp < weak.hp / weak.maxHp) weak = s;
+    }
+    if (weak && kid.carry >= 2) {
+      walk(game, cellCentreX(weak.col), cellCentreY(weak.row) + 24);
+      intent.act = kid.prompt === 'patch';
+      return;
+    }
+    const wantFill = weak || kid.carry < kid.cap * 0.6;
+    if (wantFill || kid.carry < kid.cap) {
+      let fx = weak ? cellCentreX(weak.col) : kid.x;
+      for (let k = 0; k < GRID.cols && !safeLane(fx); k += 1) fx += GRID.cellW;
+      if (fx > 1200) fx = GRID.x + GRID.cellW / 2;
+      const at = walk(game, fx, wet);
+      intent.act = kid.prompt === 'fill' && (at || kid.y < wet + 12);
+      if (kid.carry >= kid.cap - 0.2 || (weak && kid.carry >= 4) || (!weak && kid.carry >= kid.cap * 0.85)) {
+        intent.act = false;
+        if (!weak) walk(game, CASTLE.x + CASTLE.width / 2, CASTLE.top - 24);
+        else walk(game, cellCentreX(weak.col), cellCentreY(weak.row) + 24);
+      }
+      return;
+    }
+    walk(game, CASTLE.x + CASTLE.width / 2, CASTLE.top - 24);
+    intent.act = kid.prompt === 'deposit';
   }
 
   pilot.update = function update(game, dt) {
+    if (options.idle) return;
+    if (game.phase === 'tide') kidTurn(game);
+    else {
+      game.intent.dx = 0;
+      game.intent.dy = 0;
+      game.intent.act = false;
+    }
     pilot.clock += dt;
     if (pilot.clock < interval) return;
     pilot.clock = 0;
     if (game.phase === 'build') {
-      if (!buildNext(game) && !upgradeSome(game)) {
-        if (game.sand < 14 || game.buildLeft > 6) scoopSomewhere(game);
-        else if (options.eager !== false && game.buildLeft < 14) startTideNow(game);
-      }
-      return;
-    }
-    if (game.phase !== 'tide') return;
-    if (squashNearest(game)) return;
-    if (patchWeakest(game)) return;
-    if (buildNext(game)) return;
-    if (game.sand > 24 && upgradeSome(game)) return;
-    scoopSomewhere(game);
+      if (!mouseTurn(game) && game.buildLeft < (options.startAt ?? 20)) startTideNow(game);
+    } else if (game.phase === 'tide') mouseTurn(game);
   };
 
   /** Pick the best card from the offered three. */
@@ -124,5 +169,6 @@ export function createAutopilot(options = {}) {
     return best;
   };
 
+  void KID;
   return pilot;
 }

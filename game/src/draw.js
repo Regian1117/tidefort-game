@@ -267,3 +267,9 @@ export function drawCursor(ctx, x, y) {
   ctx.stroke();
   ctx.restore();
 }
+
+export function outline(ctx, w = 3) {
+  ctx.lineWidth = w;
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = PALETTE.outline;
+}

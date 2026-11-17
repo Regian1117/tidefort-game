@@ -6,8 +6,8 @@ import { chooseUpgrade, createGame, offerUpgrades, startTideNow, updateGame } fr
 import { createInput } from './input.js';
 import { createAudio } from './audio.js';
 import { createAutopilot } from './autopilot.js';
-import { altClickAt, clickAt, scoop, selectTool } from './player.js';
-import { toolAt } from './hud.js';
+import { altClickAt, clickAt, selectTool } from './player.js';
+import { startButtonAt, toolAt } from './hud.js';
 import { upgradeCardRect } from './screens.js';
 import {
   paint, SCREEN_CONTROLS, SCREEN_LOSE, SCREEN_PAUSE, SCREEN_PLAY, SCREEN_TITLE, SCREEN_UPGRADE, SCREEN_WIN,
@@ -66,7 +66,7 @@ export function createApp(canvas, status, fixedSeed) {
     accumulator = 0;
     newBest = false;
     screen = SCREEN_PLAY;
-    announce('Tide 1. Build walls with the mouse, then press Space.');
+    announce('Tide 1. Build walls with the mouse, then press Enter.');
   }
 
   function finishRun(won) {
@@ -79,9 +79,6 @@ export function createApp(canvas, status, fixedSeed) {
     announce(won ? `The castle stands. Score ${game.score}.` : `Washed away. Score ${game.score}.`);
   }
 
-  function pointer() {
-    return input.pointer.inside ? input.pointer : { x: 640, y: 480 };
-  }
 
   function playClick(e) {
     if (e.button === 2) {
@@ -94,7 +91,8 @@ export function createApp(canvas, status, fixedSeed) {
       audio.play('thud');
       return;
     }
-    if (!clickAt(game, e.x, e.y) && e.x > 246 && e.x < 1034 && e.y > 170 && e.y < 652) scoop(game, e.x, e.y);
+    if (game.phase === 'build' && startButtonAt(e.x, e.y)) startTideNow(game);
+    else clickAt(game, e.x, e.y);
   }
 
   function handleInput() {
@@ -117,8 +115,7 @@ export function createApp(canvas, status, fixedSeed) {
       } else if (screen === SCREEN_PLAY) {
         if (e.type === 'click') playClick(e);
         else if (e.code in TOOL_KEYS) selectTool(game, TOOL_KEYS[e.code]);
-        else if (e.code === 'Space' && game.phase === 'build') startTideNow(game);
-        else if (e.code === 'Space' || e.code === 'KeyE') scoop(game, pointer().x, pointer().y);
+        else if (e.code === 'Enter' && game.phase === 'build') startTideNow(game);
         else if (e.code === 'KeyP' || e.code === 'Escape') {
           screen = SCREEN_PAUSE;
           announce('Paused.');
@@ -129,7 +126,7 @@ export function createApp(canvas, status, fixedSeed) {
           chooseUpgrade(game, pick);
           screen = SCREEN_PLAY;
           audio.play('upgrade');
-          announce(`Tide ${game.tide}. Build, then press Space.`);
+          announce(`Tide ${game.tide}. Build, then press Enter.`);
         }
       } else if (screen === SCREEN_PAUSE) {
         if (e.type === 'click' || e.code === 'KeyP' || e.code === 'Escape' || e.code === 'Space') {
@@ -160,6 +157,7 @@ export function createApp(canvas, status, fixedSeed) {
   }
 
   function stepPlay() {
+    input.intent(game.intent);
     updateGame(game, STEP);
     for (const name of game.events) audio.play(name);
     game.events.length = 0;

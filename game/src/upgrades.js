@@ -42,9 +42,9 @@ export const UPGRADES = [
   {
     id: 'big-bucket',
     name: 'Bigger Bucket',
-    desc: 'Each scoop gives +2 sand and cools down faster.',
+    desc: 'The kid carries 4 more sand: fewer risky trips to the waterline.',
     icon: 'bucket',
-    apply: (g) => { g.mods.scoopBonus += 2; g.mods.scoopCooldown *= 0.8; },
+    apply: (g) => { g.kid.cap += 4; },
   },
   {
     id: 'crab-traps',

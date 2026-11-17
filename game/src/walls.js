@@ -1,9 +1,12 @@
 // Structures on the beach: build, upgrade, patch, take damage, and the towers' shooting. A wall
-// holds a lane, a tower shoots crabs and gulls, a moat drains the waves that cross it.
+// stops a lane, a tower stops a lane and shoots pests in range, a moat drains weak waves sideways.
+// Structures also dry out and crack a little while the tide runs, so maintenance matters.
 import { GRID, PATCH, STRUCTURE, TOOLS } from './config.js';
-import { cellCentreX, cellCentreY, structureAt } from './beach.js';
+import { cellCentreX, cellCentreY, firstDryRow, structureAt } from './beach.js';
 import { spawnChunks, spawnFoam, spawnSparkle, floatText, addShake } from './particles.js';
 import { addScore, breakCombo, bumpCombo } from './score.js';
+
+const DECAY_PER_SECOND = 0.45;
 
 export function maxHpOf(game, kind, level) {
   return STRUCTURE[kind].hp[level - 1] * (kind === 'moat' ? 1 : game.mods.hpScale);
@@ -17,16 +20,16 @@ export function upgradeCost(s) {
   return s.level >= 3 ? null : STRUCTURE[s.kind].upgrade[s.level];
 }
 
-/** Place a new structure; returns { ok, reason }. */
+/** Place a new structure; returns { ok, reason }. Only dry sand can be built on. */
 export function buildAt(game, col, row, kind) {
   if (col < 0 || col >= GRID.cols || row < 0 || row >= GRID.rows) return { ok: false, reason: 'off' };
+  if (row < firstDryRow(game.waterline)) return { ok: false, reason: 'water' };
   if (structureAt(game.beach, col, row)) return { ok: false, reason: 'taken' };
   const cost = toolCost(kind);
   if (game.sand < cost) return { ok: false, reason: 'sand' };
   game.sand -= cost;
   const hp = maxHpOf(game, kind, 1);
-  const s = { kind, level: 1, col, row, hp, maxHp: hp, flash: 0, reload: 0.6, aim: 0, bob: 0 };
-  game.beach.cells[row][col] = s;
+  game.beach.cells[row][col] = { kind, level: 1, col, row, hp, maxHp: hp, flash: 0, reload: 0.6, aim: -1.2 };
   game.stats.built += 1;
   const x = cellCentreX(col);
   const y = cellCentreY(row);
@@ -47,16 +50,16 @@ export function upgradeStructure(game, s) {
   s.maxHp = next;
   s.flash = 0.25;
   spawnSparkle(game.fx, game.random, cellCentreX(s.col), cellCentreY(s.row), 8, '#ffd23f');
-  floatText(game.fx, cellCentreX(s.col), cellCentreY(s.row) - 20, `LEVEL ${s.level}`, '#ffd23f', 24);
+  floatText(game.fx, cellCentreX(s.col), cellCentreY(s.row) - 24, `LEVEL ${s.level}`, '#ffd23f', 24);
   game.events.push('upgrade');
   return { ok: true };
 }
 
-/** Pat a damaged structure back into shape. A patch made just before it falls is a perfect one. */
+/** Pat a damaged structure back into shape with bucket sand. Patching one about to fall is a perfect patch. */
 export function patchStructure(game, s) {
   if (s.kind === 'moat' || s.hp >= s.maxHp - 0.5) return { ok: false, reason: 'whole' };
-  if (game.sand < PATCH.cost) return { ok: false, reason: 'sand' };
-  game.sand -= PATCH.cost;
+  if (game.kid.carry < PATCH.carry) return { ok: false, reason: 'bucket' };
+  game.kid.carry -= PATCH.carry;
   const perfect = s.hp / s.maxHp < PATCH.perfectBelow;
   s.hp = Math.min(s.maxHp, s.hp + s.maxHp * PATCH.heal);
   s.flash = 0.2;
@@ -67,13 +70,11 @@ export function patchStructure(game, s) {
   if (perfect) {
     bumpCombo(game);
     game.stats.perfect += 1;
-    addScore(game, PATCH.perfectBonus, x, y - 28, '#ffd23f');
-    floatText(game.fx, x, y - 54, 'PERFECT PATCH', '#ffffff', 22);
+    addScore(game, PATCH.perfectBonus, x, y - 30, '#ffd23f');
+    floatText(game.fx, x, y - 58, 'PERFECT PATCH', '#ffffff', 22);
     spawnSparkle(game.fx, game.random, x, y, 10, '#ffffff');
     game.events.push('perfect');
-  } else {
-    game.events.push('patch');
-  }
+  } else game.events.push('patch');
   return { ok: true, perfect };
 }
 
@@ -85,7 +86,7 @@ export function damageStructure(game, s, power) {
   s.flash = 0.18;
   const x = cellCentreX(s.col);
   const y = cellCentreY(s.row);
-  spawnChunks(game.fx, game.random, x, y, 5 + Math.min(8, Math.round(dealt / 6)));
+  spawnChunks(game.fx, game.random, x, y, 6 + Math.min(10, Math.round(dealt / 5)));
   addShake(game.fx, 3 + Math.min(7, dealt / 5));
   if (s.hp > 0) {
     game.events.push('hit');
@@ -93,7 +94,7 @@ export function damageStructure(game, s, power) {
   }
   game.beach.cells[s.row][s.col] = null;
   game.stats.lost += 1;
-  spawnChunks(game.fx, game.random, x, y, 22, true);
+  spawnChunks(game.fx, game.random, x, y, 26, true);
   spawnFoam(game.fx, game.random, x, y, 6);
   addShake(game.fx, 11);
   breakCombo(game);
@@ -102,21 +103,24 @@ export function damageStructure(game, s, power) {
   return { destroyed: true, dealt };
 }
 
-/** Towers pick the nearest pest in range and throw a shell at it. */
+/** Towers pick the nearest pest within their (short) range and throw a shell at it. */
 export function updateTowers(game, dt) {
   for (let row = 0; row < GRID.rows; row += 1) {
     for (let col = 0; col < GRID.cols; col += 1) {
       const s = game.beach.cells[row][col];
       if (!s) continue;
       if (s.flash > 0) s.flash = Math.max(0, s.flash - dt);
+      if (game.phase === 'tide' && s.kind !== 'moat') {
+        s.hp -= DECAY_PER_SECOND * dt * (s.maxHp / 100);
+        if (s.hp <= 0.5) s.hp = 0.5;
+      }
       if (s.kind !== 'tower') continue;
       s.reload -= dt;
       if (s.reload > 0) continue;
-      const range = STRUCTURE.tower.range * GRID.cell;
       const tx = cellCentreX(col);
       const ty = cellCentreY(row);
       let best = null;
-      let bestDist = range;
+      let bestDist = STRUCTURE.tower.range;
       for (const e of game.enemies) {
         if (e.state === 'dead' || e.state === 'flee') continue;
         const d = Math.hypot(e.x - tx, e.y - ty);

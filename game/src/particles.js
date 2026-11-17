@@ -3,7 +3,7 @@
 // random so the screenshot scenes come out the same each time.
 
 export function createFx() {
-  return { parts: [], texts: [], shake: 0, shakeX: 0, shakeY: 0, time: 0 };
+  return { parts: [], texts: [], prints: [], shake: 0, shakeX: 0, shakeY: 0, time: 0 };
 }
 
 const MAX_PARTS = 600;
@@ -79,6 +79,10 @@ export function updateFx(fx, random, dt) {
     p.vy += p.gravity * dt;
     p.x += p.vx * dt;
     p.y += p.vy * dt;
+  }
+  for (let i = fx.prints.length - 1; i >= 0; i -= 1) {
+    fx.prints[i].age += dt;
+    if (fx.prints[i].age > 5) fx.prints.splice(i, 1);
   }
   for (let i = fx.texts.length - 1; i >= 0; i -= 1) {
     const t = fx.texts[i];

@@ -1,9 +1,11 @@
 // Full-screen overlays drawn over the beach: title (over live attract play), the controls card,
 // the upgrade pick, pause, and the two endings: THE CASTLE STANDS and WASHED AWAY.
 import { FIELD, PALETTE, TOTAL_TIDES } from './config.js';
+import { waterlineFor } from './beach.js';
+import { planFor } from './lanes.js';
 import { flagIcon, icon, outlineText, panel, plainText, roundRectPath } from './draw.js';
 
-const CARD = { w: 350, h: 196, gap: 18, y: 336 };
+const CARD = { w: 400, h: 120, gap: 20, y: 102 };
 
 function wrap(ctx, text, maxWidth) {
   const words = text.split(' ');
@@ -55,14 +57,14 @@ export function drawControls(ctx, time) {
   tint(ctx, 'rgba(143, 214, 255, 0.35)');
   panel(ctx, 190, 120, 900, 480, { radius: 24 });
   outlineText(ctx, 'HOW TO PLAY', 640, 190, { size: 58, align: 'center', color: PALETTE.coral, stroke: '#ffffff', width: 8 });
-  plainText(ctx, 'Keep the flag standing through 7 tides. Waves roll down the lanes and wear your sand away.', 640, 226, { size: 21, align: 'center' });
+  plainText(ctx, 'The sea rises every tide. Read the arrows, build, then run the beach as the kid.', 640, 226, { size: 21, align: 'center' });
   const rows = [
-    ['1 2 3', 'Pick WALL, TOWER or MOAT, then CLICK a sand cell to build it'],
-    ['CLICK', 'on a damaged wall to PATCH it (patch one below 40% for a PERFECT combo)'],
-    ['CLICK', 'on a crab, gull or log to squash it. Towers shoot pests for you'],
-    ['RIGHT-CLICK', 'upgrade a structure (3 levels, costs sand)'],
-    ['SPACE', 'scoop sand in a tide, or start the tide early while building'],
-    ['P  M  R', 'pause, mute, rebuild from scratch'],
+    ['1 2 3 + CLICK', 'build a WALL (stops a wave), TOWER (shoots pests) or MOAT (drains waves sideways)'],
+    ['CLICK / R-CLICK', 'on a structure to upgrade it. Sand is scarce: you cannot guard every lane'],
+    ['W A S D', 'walk the kid. Stay out of the surge or you are washed back and spill your bucket'],
+    ['SPACE', 'fill the bucket at the wet line, patch a crack, swat a gull, deposit at the castle'],
+    ['WALK INTO', 'a crab to stomp it. Gulls dive for your bucket: swat them'],
+    ['ENTER  P  M  R', 'start the tide, pause, mute, rebuild'],
   ];
   rows.forEach(([keys, text], i) => {
     const y = 278 + i * 46;
@@ -85,32 +87,55 @@ export function upgradeCardRect(index) {
 }
 
 export function drawUpgradePick(ctx, game, time, hover) {
-  tint(ctx, 'rgba(20, 90, 130, 0.3)');
-  outlineText(ctx, `TIDE ${game.tide} SURVIVED`, 640, 118, { size: 64, align: 'center', color: '#ffffff', stroke: PALETTE.outline, width: 12 });
-  outlineText(ctx, 'Pick ONE upgrade to keep for the rest of the run', 640, 166, { size: 28, align: 'center', color: PALETTE.gold, width: 6 });
+  tint(ctx, 'rgba(20, 90, 130, 0.16)');
+  drawNextTide(ctx, game, time);
+  outlineText(ctx, `TIDE ${game.tide} SURVIVED`, 24, 92, { size: 36, color: '#ffffff', width: 8 });
+  outlineText(ctx, 'PICK ONE UPGRADE (click or 1 2 3)', 372, 92, { size: 20, color: PALETTE.gold, width: 5 });
   game.choices.forEach((card, i) => {
     const r = upgradeCardRect(i);
-    const lift = hover === i ? -8 : 0;
-    const top = r.y + lift;
-    panel(ctx, r.x, top, r.w, r.h, { fill: hover === i ? '#fffbe6' : PALETTE.panel, radius: 20, line: hover === i ? 5 : 3, stroke: hover === i ? PALETTE.coral : PALETTE.outline });
-    roundRectPath(ctx, r.x + 18, top + 28, 84, 84, 42);
+    const top = r.y + (hover === i ? -5 : 0);
+    panel(ctx, r.x, top, r.w, r.h, { fill: hover === i ? '#fffbe6' : PALETTE.panel, radius: 16, line: hover === i ? 5 : 3, stroke: hover === i ? PALETTE.coral : PALETTE.outline });
+    roundRectPath(ctx, r.x + 12, top + 24, 62, 62, 31);
     ctx.fillStyle = '#d7f5ef';
     ctx.fill();
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 3.5;
     ctx.strokeStyle = PALETTE.outline;
     ctx.stroke();
-    icon(ctx, card.icon, r.x + 60, top + 70, 28);
-    plainText(ctx, card.name, r.x + 114, top + 52, { size: 25, weight: 900, color: PALETTE.coralDark });
-    ctx.font = '700 18px sans-serif';
-    wrap(ctx, card.desc, r.w - 134).forEach((line, li) => {
-      plainText(ctx, line, r.x + 114, top + 82 + li * 23, { size: 18, weight: 700 });
+    icon(ctx, card.icon, r.x + 43, top + 56, 21);
+    plainText(ctx, card.name, r.x + 86, top + 34, { size: 22, weight: 900, color: PALETTE.coralDark });
+    ctx.font = '700 15px sans-serif';
+    wrap(ctx, card.desc, r.w - 104).forEach((line, li) => {
+      plainText(ctx, line, r.x + 86, top + 56 + li * 19, { size: 15, weight: 700 });
     });
-    panel(ctx, r.x + r.w / 2 - 70, top + r.h - 52, 140, 38, { fill: PALETTE.coral, radius: 19, shadow: false });
-    outlineText(ctx, `PRESS ${i + 1}`, r.x + r.w / 2, top + r.h - 24, { size: 22, align: 'center', color: '#ffffff', width: 5 });
+    panel(ctx, r.x + r.w - 80, top + 8, 68, 24, { fill: PALETTE.coral, radius: 12, shadow: false });
+    outlineText(ctx, `[${i + 1}]`, r.x + r.w - 46, top + 26, { size: 17, align: 'center', color: '#ffffff', width: 4 });
   });
-  plainText(ctx, 'Click a card or press 1, 2 or 3', 640, 572, { size: 22, align: 'center', color: '#ffffff', weight: 800 });
-  void time;
 }
+
+/** What the next tide brings: the higher waterline as a dashed mark, and a rogue wave notice. */
+function drawNextTide(ctx, game, time) {
+  const y = waterlineFor(game.tide + 1);
+  ctx.strokeStyle = PALETTE.coral;
+  ctx.lineWidth = 5;
+  ctx.setLineDash([18, 12]);
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  ctx.lineTo(FIELD.width, y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  outlineText(ctx, `TIDE ${game.tide + 1} WATERLINE`, 640, y + 22, { size: 18, align: 'center', color: '#ffffff', stroke: PALETTE.coralDark, width: 5 });
+  const rogue = planFor(game.tide + 1).rogue;
+  if (rogue > 0) {
+    const pulse = 1 + Math.sin(time * 6) * 0.03;
+    ctx.save();
+    ctx.translate(1050, 78);
+    ctx.scale(pulse, pulse);
+    panel(ctx, -200, -20, 400, 40, { fill: PALETTE.coral, radius: 20, shadow: false });
+    outlineText(ctx, `NEXT: ROGUE WAVE x${rogue}, EVERY LANE`, 0, 8, { size: 20, align: 'center', width: 5 });
+    ctx.restore();
+  }
+}
+
 
 export function drawPause(ctx, time) {
   tint(ctx, 'rgba(255, 255, 255, 0.5)');
